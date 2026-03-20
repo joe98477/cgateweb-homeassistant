@@ -131,15 +131,19 @@ ACCESSEOF
     bashio::log.info "Created default access.txt"
 fi
 
-# Set the project name in C-Gate config
+# Ensure C-Gate config file exists with project default
 CGATE_PROJECT=$(bashio::config 'cgate_project' 'HOME')
 CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
-if [[ -f "${CGATE_CONFIG}" ]]; then
-    if grep -q "project.default" "${CGATE_CONFIG}"; then
-        sed -i "s/project.default=.*/project.default=${CGATE_PROJECT}/" "${CGATE_CONFIG}"
-    else
-        echo "project.default=${CGATE_PROJECT}" >> "${CGATE_CONFIG}"
-    fi
+if [[ ! -f "${CGATE_CONFIG}" ]]; then
+    cat > "${CGATE_CONFIG}" << CONFIGEOF
+project.default=${CGATE_PROJECT}
+CONFIGEOF
+    bashio::log.info "Created C-Gate config with project: ${CGATE_PROJECT}"
+elif grep -q "project.default" "${CGATE_CONFIG}"; then
+    sed -i "s/project.default=.*/project.default=${CGATE_PROJECT}/" "${CGATE_CONFIG}"
+    bashio::log.info "Updated default project to: ${CGATE_PROJECT}"
+else
+    echo "project.default=${CGATE_PROJECT}" >> "${CGATE_CONFIG}"
     bashio::log.info "Set default project to: ${CGATE_PROJECT}"
 fi
 
