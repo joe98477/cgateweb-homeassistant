@@ -21,16 +21,37 @@ fi
 
 CGATE_PORT=$(bashio::config 'cgate_port' '20023')
 CGATE_EVENT_PORT=$(bashio::config 'cgate_event_port' '20025')
+CGATE_PROJECT=$(bashio::config 'cgate_project' 'HOME')
 
 bashio::log.info "Starting C-Gate server..."
 bashio::log.info "  Command port: ${CGATE_PORT}"
 bashio::log.info "  Event port: ${CGATE_EVENT_PORT}"
+
+# Configure ports and settings in C-GateConfig.txt
+# C-Gate does not accept port/gui args on the command line
+CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
+mkdir -p "${CGATE_DIR}/config"
+
+# Build config ensuring required settings are present
+declare -A SETTINGS=(
+    ["cgate.port"]="${CGATE_PORT}"
+    ["cgate.event.port"]="${CGATE_EVENT_PORT}"
+    ["project.default"]="${CGATE_PROJECT}"
+)
+
+for KEY in "${!SETTINGS[@]}"; do
+    VALUE="${SETTINGS[$KEY]}"
+    if [[ -f "${CGATE_CONFIG}" ]] && grep -q "^${KEY}=" "${CGATE_CONFIG}"; then
+        sed -i "s|^${KEY}=.*|${KEY}=${VALUE}|" "${CGATE_CONFIG}"
+    else
+        echo "${KEY}=${VALUE}" >> "${CGATE_CONFIG}"
+    fi
+done
 
 cd "${CGATE_DIR}" || exit 1
 
 exec java \
     -Djava.awt.headless=true \
     -jar "${CGATE_JAR}" \
-    -p "${CGATE_PORT}" \
-    -e "${CGATE_EVENT_PORT}" \
-    -nogui
+    -c "${CGATE_CONFIG}" \
+    -s
