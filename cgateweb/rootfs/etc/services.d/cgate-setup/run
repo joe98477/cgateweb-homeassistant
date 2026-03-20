@@ -1,6 +1,9 @@
 #!/usr/bin/with-contenv bashio
 # ==============================================================================
 # Configure C-Gate CNI interface after C-Gate starts (managed mode only)
+#
+# On first run: creates the project and adds the CNI network
+# On subsequent runs: skips setup if project tag file already exists
 # ==============================================================================
 
 CGATE_MODE=$(bashio::config 'cgate_mode' 'remote')
@@ -13,9 +16,18 @@ if [[ "${CGATE_MODE}" != "managed" ]] || [[ -z "${CNI_IP}" ]]; then
     exec sleep infinity
 fi
 
+CGATE_DIR="/data/cgate"
 CGATE_PORT=$(bashio::config 'cgate_port' '20023')
 CGATE_PROJECT=$(bashio::config 'cgate_project' 'HOME')
 CNI_NETWORK=$(bashio::config 'cni_network' '254')
+
+# Check if the project already exists (tag file present from a previous run)
+PROJECT_TAG="${CGATE_DIR}/tag/${CGATE_PROJECT}.xml"
+if [[ -f "${PROJECT_TAG}" ]]; then
+    bashio::log.info "Project '${CGATE_PROJECT}' already exists (${PROJECT_TAG}), skipping CNI setup"
+    bashio::log.info "C-Gate will load the project via project.start in config"
+    exec sleep infinity
+fi
 
 # Wait for C-Gate to accept connections
 bashio::log.info "Waiting for C-Gate to accept connections on port ${CGATE_PORT}..."
@@ -34,9 +46,8 @@ fi
 # Give C-Gate a moment to fully initialize after port opens
 sleep 3
 
-# Configure CNI interface via C-Gate command protocol
-# Create the project if it doesn't exist, start it, then add the CNI network
-bashio::log.info "Configuring CNI interface: ${CNI_IP} on network ${CNI_NETWORK} (project: ${CGATE_PROJECT})"
+# First run: create project and configure CNI network
+bashio::log.info "First-time setup: creating project '${CGATE_PROJECT}' with CNI ${CNI_IP} on network ${CNI_NETWORK}"
 
 RESPONSE=$(
 {
@@ -60,6 +71,6 @@ echo "${RESPONSE}" | while IFS= read -r line; do
     bashio::log.info "  ${line}"
 done
 
-bashio::log.info "CNI configuration complete"
+bashio::log.info "CNI configuration complete — C-Gate will discover devices from the network"
 
 exec sleep infinity
