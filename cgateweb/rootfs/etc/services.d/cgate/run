@@ -54,5 +54,4 @@ cd "${CGATE_DIR}" || exit 1
 exec java \
     -Djava.awt.headless=true \
     -jar "${CGATE_JAR}" \
-    -c "${CGATE_CONFIG}" \
     -s
