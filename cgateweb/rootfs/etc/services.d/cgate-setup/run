@@ -1,0 +1,53 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Configure C-Gate CNI interface after C-Gate starts (managed mode only)
+# ==============================================================================
+
+CGATE_MODE=$(bashio::config 'cgate_mode' 'remote')
+CNI_IP=$(bashio::config 'cni_ip' '')
+
+if [[ "${CGATE_MODE}" != "managed" ]] || [[ -z "${CNI_IP}" ]]; then
+    if [[ "${CGATE_MODE}" == "managed" ]] && [[ -z "${CNI_IP}" ]]; then
+        bashio::log.info "C-Gate managed mode: no CNI IP configured, skipping CNI setup"
+    fi
+    exec sleep infinity
+fi
+
+CGATE_PORT=$(bashio::config 'cgate_port' '20023')
+CGATE_PROJECT=$(bashio::config 'cgate_project' 'HOME')
+CNI_NETWORK=$(bashio::config 'cni_network' '254')
+
+# Wait for C-Gate to accept connections
+bashio::log.info "Waiting for C-Gate to accept connections on port ${CGATE_PORT}..."
+for i in $(seq 1 30); do
+    if nc -z 127.0.0.1 "${CGATE_PORT}" 2>/dev/null; then
+        break
+    fi
+    sleep 2
+done
+
+if ! nc -z 127.0.0.1 "${CGATE_PORT}" 2>/dev/null; then
+    bashio::log.error "C-Gate did not start within 60 seconds, cannot configure CNI"
+    exec sleep infinity
+fi
+
+# Give C-Gate a moment to fully initialize after port opens
+sleep 3
+
+# Configure CNI interface via C-Gate command protocol
+bashio::log.info "Configuring CNI interface: ${CNI_IP} on network ${CNI_NETWORK} (project: ${CGATE_PROJECT})"
+
+{
+    sleep 1
+    echo "project use ${CGATE_PROJECT}"
+    sleep 1
+    echo "net create ${CNI_NETWORK} cni ${CNI_IP}"
+    sleep 1
+    echo "project save ${CGATE_PROJECT}"
+    sleep 1
+    echo "quit"
+} | nc 127.0.0.1 "${CGATE_PORT}"
+
+bashio::log.info "CNI configuration complete"
+
+exec sleep infinity

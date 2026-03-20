@@ -137,6 +137,7 @@ CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
 if [[ ! -f "${CGATE_CONFIG}" ]]; then
     cat > "${CGATE_CONFIG}" << CONFIGEOF
 project.default=${CGATE_PROJECT}
+project.start=${CGATE_PROJECT}
 CONFIGEOF
     bashio::log.info "Created C-Gate config with project: ${CGATE_PROJECT}"
 elif grep -q "project.default" "${CGATE_CONFIG}"; then

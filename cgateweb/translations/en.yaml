@@ -120,6 +120,17 @@ configuration:
     description: >-
       Optional SHA256 checksum used to verify the downloaded (or uploaded) C-Gate
       zip file before installation. Recommended when using a custom download URL.
+  cni_ip:
+    name: CNI/Wiser IP Address
+    description: >-
+      IP address of your C-Bus Network Interface (CNI) or Wiser controller.
+      Only used in managed mode. C-Gate connects to this device on port 10001
+      to communicate with the C-Bus network.
+  cni_network:
+    name: C-Bus Network Number
+    description: >-
+      C-Bus network number associated with the CNI interface. Most installations
+      use the default (254). Only used in managed mode when a CNI IP is configured.
   cbus_label_file:
     name: Custom Label File
     description: >-

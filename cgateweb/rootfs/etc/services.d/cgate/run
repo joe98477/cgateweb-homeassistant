@@ -37,6 +37,7 @@ declare -A SETTINGS=(
     ["cgate.port"]="${CGATE_PORT}"
     ["cgate.event.port"]="${CGATE_EVENT_PORT}"
     ["project.default"]="${CGATE_PROJECT}"
+    ["project.start"]="${CGATE_PROJECT}"
 )
 
 for KEY in "${!SETTINGS[@]}"; do
