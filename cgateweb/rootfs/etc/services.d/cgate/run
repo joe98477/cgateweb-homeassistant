@@ -74,10 +74,30 @@ ls "${CGATE_DIR}/tag/"*.xml 2>/dev/null | while IFS= read -r f; do
     bashio::log.debug "  $(basename "${f}")"
 done
 
+# Ensure required directories exist
+mkdir -p "${CGATE_DIR}/logs"
+mkdir -p "${CGATE_DIR}/tag"
+
 cd "${CGATE_DIR}" || exit 1
 
-bashio::log.debug "Launching C-Gate from ${CGATE_DIR} with -s flag"
+# Log the cgate.sh from the distribution for reference
+if [[ -f "${CGATE_DIR}/cgate.sh" ]]; then
+    bashio::log.debug "Distribution cgate.sh contents:"
+    while IFS= read -r line; do
+        bashio::log.debug "  ${line}"
+    done < "${CGATE_DIR}/cgate.sh"
+fi
 
+bashio::log.debug "Launching C-Gate from ${CGATE_DIR}"
+bashio::log.debug "Java version: $(java -version 2>&1 | head -1)"
+bashio::log.debug "Directory listing:"
+ls -la "${CGATE_DIR}/" 2>/dev/null | while IFS= read -r line; do
+    bashio::log.debug "  ${line}"
+done
+
+# Launch C-Gate in server mode
+# Note: -s = server mode (no GUI). If cgate.sh uses different flags,
+# check debug logs above for the distribution's launch command.
 exec java \
     -Djava.awt.headless=true \
     -jar "${CGATE_JAR}" \
