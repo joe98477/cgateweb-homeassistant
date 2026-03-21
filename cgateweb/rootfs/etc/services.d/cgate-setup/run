@@ -2,8 +2,10 @@
 # ==============================================================================
 # Configure C-Gate CNI interface after C-Gate starts (managed mode only)
 #
-# On first run: creates the project and adds the CNI network
-# On subsequent runs: skips setup if project tag file already exists
+# - Auto-detects project name from the CNI/Wiser if possible
+# - Creates the project and adds the CNI network on first run
+# - Skips setup if project tag file already exists
+# - Never sends programming commands to C-Bus devices
 # ==============================================================================
 
 CGATE_MODE=$(bashio::config 'cgate_mode' 'remote')
@@ -21,18 +23,81 @@ CGATE_PORT=$(bashio::config 'cgate_port' '20023')
 CGATE_PROJECT=$(bashio::config 'cgate_project' 'HOME')
 CNI_NETWORK=$(bashio::config 'cni_network' '254')
 
-# Check if the project already exists (tag file present from a previous run)
-PROJECT_TAG="${CGATE_DIR}/tag/${CGATE_PROJECT}.xml"
-if [[ -f "${PROJECT_TAG}" ]]; then
-    bashio::log.info "Project '${CGATE_PROJECT}' already exists (${PROJECT_TAG}), skipping CNI setup"
-    bashio::log.info "C-Gate will load the project via project.start in config"
-    exec sleep infinity
+bashio::log.debug "CNI setup starting with config:"
+bashio::log.debug "  CNI IP: ${CNI_IP}"
+bashio::log.debug "  Configured project: ${CGATE_PROJECT}"
+bashio::log.debug "  Network: ${CNI_NETWORK}"
+bashio::log.debug "  C-Gate port: ${CGATE_PORT}"
+bashio::log.debug "  C-Gate dir: ${CGATE_DIR}"
+
+# ---------------------------------------------------------------------------
+# Helper: send a single command to C-Gate and return the response
+# Usage: cgate_cmd "command string"
+# ---------------------------------------------------------------------------
+cgate_cmd() {
+    local CMD="$1"
+    bashio::log.debug "C-Gate command: ${CMD}"
+    local RESULT
+    RESULT=$(
+    {
+        sleep 0.5
+        echo "${CMD}"
+        sleep 1
+        echo "quit"
+    } | nc -w 5 127.0.0.1 "${CGATE_PORT}" 2>&1
+    )
+    bashio::log.debug "C-Gate response: ${RESULT}"
+    echo "${RESULT}"
+}
+
+# ---------------------------------------------------------------------------
+# Check for existing project tag files (any project, not just configured name)
+# ---------------------------------------------------------------------------
+bashio::log.debug "Checking for existing project tag files in ${CGATE_DIR}/tag/"
+if [[ -d "${CGATE_DIR}/tag" ]]; then
+    EXISTING_TAGS=$(find "${CGATE_DIR}/tag" -maxdepth 1 -name '*.xml' -type f 2>/dev/null)
+    if [[ -n "${EXISTING_TAGS}" ]]; then
+        bashio::log.debug "Found existing project tag files:"
+        echo "${EXISTING_TAGS}" | while IFS= read -r tagfile; do
+            bashio::log.debug "  ${tagfile}"
+        done
+
+        # Use the first existing project if the configured name doesn't match any
+        FIRST_TAG=$(echo "${EXISTING_TAGS}" | head -1)
+        EXISTING_PROJECT=$(basename "${FIRST_TAG}" .xml)
+
+        if [[ -f "${CGATE_DIR}/tag/${CGATE_PROJECT}.xml" ]]; then
+            bashio::log.info "Project '${CGATE_PROJECT}' already exists, skipping CNI setup"
+            bashio::log.info "C-Gate will load the project via project.start in config"
+            exec sleep infinity
+        else
+            bashio::log.info "Found existing project '${EXISTING_PROJECT}' but configured name is '${CGATE_PROJECT}'"
+            bashio::log.info "Using existing project '${EXISTING_PROJECT}' instead"
+            CGATE_PROJECT="${EXISTING_PROJECT}"
+            # Update C-GateConfig.txt to use the existing project name
+            CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
+            if [[ -f "${CGATE_CONFIG}" ]]; then
+                sed -i "s|^project.default=.*|project.default=${CGATE_PROJECT}|" "${CGATE_CONFIG}"
+                sed -i "s|^project.start=.*|project.start=${CGATE_PROJECT}|" "${CGATE_CONFIG}"
+                bashio::log.debug "Updated C-GateConfig.txt project references to '${CGATE_PROJECT}'"
+            fi
+            bashio::log.info "Project '${CGATE_PROJECT}' already configured, skipping CNI setup"
+            exec sleep infinity
+        fi
+    fi
 fi
 
+bashio::log.debug "No existing project tag files found — first-time setup required"
+
+# ---------------------------------------------------------------------------
 # Wait for C-Gate to accept connections
+# ---------------------------------------------------------------------------
 bashio::log.info "Waiting for C-Gate to accept connections on port ${CGATE_PORT}..."
+WAIT_START=$(date +%s)
 for i in $(seq 1 30); do
     if nc -z 127.0.0.1 "${CGATE_PORT}" 2>/dev/null; then
+        WAIT_END=$(date +%s)
+        bashio::log.debug "C-Gate accepting connections after $((WAIT_END - WAIT_START)) seconds"
         break
     fi
     sleep 2
@@ -44,14 +109,128 @@ if ! nc -z 127.0.0.1 "${CGATE_PORT}" 2>/dev/null; then
 fi
 
 # Give C-Gate a moment to fully initialize after port opens
-sleep 3
+bashio::log.debug "Waiting 5 seconds for C-Gate to fully initialize..."
+sleep 5
 
-# First run: create project and configure CNI network
-bashio::log.info "First-time setup: creating project '${CGATE_PROJECT}' with CNI ${CNI_IP} on network ${CNI_NETWORK}"
+# ---------------------------------------------------------------------------
+# Try to auto-detect the project name from the CNI/Wiser
+#
+# Some CNI devices (especially Wiser 2) store the project name and can
+# report it. We try to discover it by:
+#   1. Creating a temporary project to connect to the CNI
+#   2. Querying for the project name from the network
+#   3. If found, using the detected name for the real project
+# ---------------------------------------------------------------------------
+bashio::log.info "Attempting to auto-detect project name from CNI at ${CNI_IP}..."
 
-RESPONSE=$(
+# Create a temporary discovery project
+bashio::log.debug "Creating temporary project '_DISCOVER' for CNI detection"
+DISC_RESPONSE=$(
 {
-    sleep 1
+    sleep 0.5
+    echo "project new _DISCOVER"
+    sleep 0.5
+    echo "project start _DISCOVER"
+    sleep 0.5
+    echo "project use _DISCOVER"
+    sleep 0.5
+    echo "net create ${CNI_NETWORK} cni ${CNI_IP}"
+    sleep 0.5
+    echo "project save _DISCOVER"
+    sleep 0.5
+    echo "quit"
+} | nc -w 10 127.0.0.1 "${CGATE_PORT}" 2>&1
+)
+bashio::log.debug "Discovery project setup response:"
+echo "${DISC_RESPONSE}" | while IFS= read -r line; do
+    [[ -n "${line}" ]] && bashio::log.debug "  ${line}"
+done
+
+# Wait for C-Gate to connect to the CNI and sync
+bashio::log.debug "Waiting 10 seconds for C-Gate to sync with CNI..."
+sleep 10
+
+# Try to read the project/network name from the CNI via C-Gate
+DETECTED_PROJECT=""
+
+# Method 1: Try dbget for the network tag name
+bashio::log.debug "Trying dbget for network tag name..."
+DBGET_RESULT=$(cgate_cmd "dbget //${CNI_NETWORK}/TagName")
+bashio::log.debug "dbget TagName result: ${DBGET_RESULT}"
+# Look for a 300 response (data response) containing a name
+PARSED=$(echo "${DBGET_RESULT}" | grep -oP '300 [0-9/]*: \K.*' | head -1 | tr -d '[:space:]')
+if [[ -n "${PARSED}" ]] && [[ "${PARSED}" != "none" ]] && [[ "${PARSED}" != "null" ]]; then
+    bashio::log.debug "dbget returned potential project name: '${PARSED}'"
+fi
+
+# Method 2: Try project list to see what C-Gate knows
+bashio::log.debug "Trying project list..."
+PROJLIST_RESULT=$(cgate_cmd "project list")
+bashio::log.debug "project list result: ${PROJLIST_RESULT}"
+
+# Method 3: Try tree command to inspect network
+bashio::log.debug "Trying tree //_DISCOVER/${CNI_NETWORK}..."
+TREE_RESULT=$(cgate_cmd "tree //_DISCOVER/${CNI_NETWORK}")
+bashio::log.debug "tree result: ${TREE_RESULT}"
+
+# Method 4: Try nget to read directly from the network
+bashio::log.debug "Trying nget for project name from network..."
+NGET_RESULT=$(cgate_cmd "nget //_DISCOVER/${CNI_NETWORK}/p/TagName")
+bashio::log.debug "nget result: ${NGET_RESULT}"
+PARSED_NGET=$(echo "${NGET_RESULT}" | grep -oP '300 [0-9/]*: \K.*' | head -1 | tr -d '[:space:]')
+if [[ -n "${PARSED_NGET}" ]] && [[ "${PARSED_NGET}" != "none" ]]; then
+    DETECTED_PROJECT="${PARSED_NGET}"
+    bashio::log.info "Auto-detected project name from network: '${DETECTED_PROJECT}'"
+fi
+
+# Clean up the temporary discovery project
+bashio::log.debug "Cleaning up temporary discovery project..."
+CLEANUP_RESULT=$(
+{
+    sleep 0.5
+    echo "project close _DISCOVER"
+    sleep 0.5
+    echo "project delete _DISCOVER"
+    sleep 0.5
+    echo "quit"
+} | nc -w 5 127.0.0.1 "${CGATE_PORT}" 2>&1
+)
+bashio::log.debug "Cleanup response: ${CLEANUP_RESULT}"
+# Also remove the temp tag file if it was created
+rm -f "${CGATE_DIR}/tag/_DISCOVER.xml" 2>/dev/null
+
+# Determine which project name to use
+if [[ -n "${DETECTED_PROJECT}" ]]; then
+    if [[ "${DETECTED_PROJECT}" != "${CGATE_PROJECT}" ]]; then
+        bashio::log.info "CNI reports project name '${DETECTED_PROJECT}' (configured: '${CGATE_PROJECT}')"
+        bashio::log.info "Using detected name '${DETECTED_PROJECT}' from the CNI"
+        CGATE_PROJECT="${DETECTED_PROJECT}"
+        # Update C-GateConfig.txt to use the detected project name
+        CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
+        if [[ -f "${CGATE_CONFIG}" ]]; then
+            sed -i "s|^project.default=.*|project.default=${CGATE_PROJECT}|" "${CGATE_CONFIG}"
+            sed -i "s|^project.start=.*|project.start=${CGATE_PROJECT}|" "${CGATE_CONFIG}"
+            bashio::log.debug "Updated C-GateConfig.txt to use detected project name '${CGATE_PROJECT}'"
+        fi
+    else
+        bashio::log.info "CNI project name matches configured name: '${CGATE_PROJECT}'"
+    fi
+else
+    bashio::log.info "Could not auto-detect project name from CNI, using configured name: '${CGATE_PROJECT}'"
+    bashio::log.debug "Check debug logs above for details on detection attempts"
+fi
+
+# ---------------------------------------------------------------------------
+# Create the real project and configure the CNI network
+# SAFETY: Only read/control commands are sent. No programming commands
+# (dbset, nset, firmware update, etc.) are ever issued.
+# ---------------------------------------------------------------------------
+bashio::log.info "Creating project '${CGATE_PROJECT}' with CNI ${CNI_IP} on network ${CNI_NETWORK}"
+bashio::log.info "NOTE: This is read-only discovery — no changes will be made to C-Bus devices"
+
+SETUP_RESPONSE=$(
+{
+    sleep 0.5
     echo "project new ${CGATE_PROJECT}"
     sleep 1
     echo "project start ${CGATE_PROJECT}"
@@ -63,14 +242,30 @@ RESPONSE=$(
     echo "project save ${CGATE_PROJECT}"
     sleep 1
     echo "quit"
-} | nc 127.0.0.1 "${CGATE_PORT}" 2>&1
+} | nc -w 10 127.0.0.1 "${CGATE_PORT}" 2>&1
 )
 
-bashio::log.info "C-Gate CNI setup response:"
-echo "${RESPONSE}" | while IFS= read -r line; do
-    bashio::log.info "  ${line}"
+bashio::log.info "C-Gate project setup response:"
+echo "${SETUP_RESPONSE}" | while IFS= read -r line; do
+    [[ -n "${line}" ]] && bashio::log.info "  ${line}"
 done
 
-bashio::log.info "CNI configuration complete — C-Gate will discover devices from the network"
+# Verify the project tag file was created
+sleep 2
+PROJECT_TAG="${CGATE_DIR}/tag/${CGATE_PROJECT}.xml"
+if [[ -f "${PROJECT_TAG}" ]]; then
+    bashio::log.info "Project tag file created: ${PROJECT_TAG}"
+    TAG_SIZE=$(stat -f%z "${PROJECT_TAG}" 2>/dev/null || stat -c%s "${PROJECT_TAG}" 2>/dev/null || echo "unknown")
+    bashio::log.debug "Tag file size: ${TAG_SIZE} bytes"
+else
+    bashio::log.warning "Project tag file not found at ${PROJECT_TAG} — C-Gate may still be syncing"
+    bashio::log.debug "Contents of ${CGATE_DIR}/tag/:"
+    ls -la "${CGATE_DIR}/tag/" 2>/dev/null | while IFS= read -r line; do
+        bashio::log.debug "  ${line}"
+    done
+fi
+
+bashio::log.info "CNI configuration complete — C-Gate will discover devices from network ${CNI_NETWORK}"
+bashio::log.info "Device discovery may take a few minutes depending on network size"
 
 exec sleep infinity

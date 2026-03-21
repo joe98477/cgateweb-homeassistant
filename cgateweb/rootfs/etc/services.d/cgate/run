@@ -26,11 +26,19 @@ CGATE_PROJECT=$(bashio::config 'cgate_project' 'HOME')
 bashio::log.info "Starting C-Gate server..."
 bashio::log.info "  Command port: ${CGATE_PORT}"
 bashio::log.info "  Event port: ${CGATE_EVENT_PORT}"
+bashio::log.info "  Project: ${CGATE_PROJECT}"
 
 # Configure ports and settings in C-GateConfig.txt
 # C-Gate does not accept port/gui args on the command line
 CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
 mkdir -p "${CGATE_DIR}/config"
+
+# Guard against programming access — remove if present from older installs
+ACCESS_FILE="${CGATE_DIR}/config/access.txt"
+if [[ -f "${ACCESS_FILE}" ]] && grep -q "^program " "${ACCESS_FILE}"; then
+    sed -i '/^program /d' "${ACCESS_FILE}"
+    bashio::log.info "Removed program access from access.txt (safety guard)"
+fi
 
 # Build config ensuring required settings are present
 declare -A SETTINGS=(
@@ -49,7 +57,30 @@ for KEY in "${!SETTINGS[@]}"; do
     fi
 done
 
+bashio::log.debug "C-GateConfig.txt contents:"
+if [[ -f "${CGATE_CONFIG}" ]]; then
+    while IFS= read -r line; do
+        bashio::log.debug "  ${line}"
+    done < "${CGATE_CONFIG}"
+else
+    bashio::log.warning "C-GateConfig.txt not found at ${CGATE_CONFIG}"
+fi
+
+bashio::log.debug "access.txt contents:"
+if [[ -f "${ACCESS_FILE}" ]]; then
+    while IFS= read -r line; do
+        bashio::log.debug "  ${line}"
+    done < "${ACCESS_FILE}"
+fi
+
+bashio::log.debug "Existing project tag files:"
+ls "${CGATE_DIR}/tag/"*.xml 2>/dev/null | while IFS= read -r f; do
+    bashio::log.debug "  $(basename "${f}")"
+done
+
 cd "${CGATE_DIR}" || exit 1
+
+bashio::log.debug "Launching C-Gate from ${CGATE_DIR} with -s flag"
 
 exec java \
     -Djava.awt.headless=true \
