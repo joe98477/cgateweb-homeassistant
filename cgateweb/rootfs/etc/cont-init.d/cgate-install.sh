@@ -123,13 +123,12 @@ if [[ ! -f "${ACCESS_FILE}" ]]; then
     mkdir -p "${CGATE_DIR}/config"
     cat > "${ACCESS_FILE}" << 'ACCESSEOF'
 # C-Gate Access Control
-# Allow local connections from the addon (interface + monitor only)
-# Program access intentionally omitted to prevent accidental
-# reprogramming of C-Bus devices
+# Allow local connections from the addon
 interface 127.0.0.1
+program 127.0.0.1
 monitor 127.0.0.1
 ACCESSEOF
-    bashio::log.info "Created default access.txt (no program access)"
+    bashio::log.info "Created default access.txt"
 fi
 
 # Ensure C-Gate config file exists with project default

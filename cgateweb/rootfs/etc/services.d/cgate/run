@@ -33,11 +33,15 @@ bashio::log.info "  Project: ${CGATE_PROJECT}"
 CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
 mkdir -p "${CGATE_DIR}/config"
 
-# Guard against programming access — remove if present from older installs
+# Ensure access.txt allows local connections (restore if missing)
 ACCESS_FILE="${CGATE_DIR}/config/access.txt"
-if [[ -f "${ACCESS_FILE}" ]] && grep -q "^program " "${ACCESS_FILE}"; then
-    sed -i '/^program /d' "${ACCESS_FILE}"
-    bashio::log.info "Removed program access from access.txt (safety guard)"
+if [[ ! -f "${ACCESS_FILE}" ]]; then
+    cat > "${ACCESS_FILE}" << 'ACCESSEOF'
+interface 127.0.0.1
+program 127.0.0.1
+monitor 127.0.0.1
+ACCESSEOF
+    bashio::log.info "Created access.txt for local connections"
 fi
 
 # Build config ensuring required settings are present
