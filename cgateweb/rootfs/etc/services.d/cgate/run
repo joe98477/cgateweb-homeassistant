@@ -33,15 +33,15 @@ bashio::log.info "  Project: ${CGATE_PROJECT}"
 CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
 mkdir -p "${CGATE_DIR}/config"
 
-# Ensure access.txt allows local connections (restore if missing)
+# Ensure access.txt has required permissions (fix if damaged by v1.5.3)
 ACCESS_FILE="${CGATE_DIR}/config/access.txt"
-if [[ ! -f "${ACCESS_FILE}" ]]; then
+if [[ ! -f "${ACCESS_FILE}" ]] || ! grep -q "^program " "${ACCESS_FILE}"; then
     cat > "${ACCESS_FILE}" << 'ACCESSEOF'
 interface 127.0.0.1
 program 127.0.0.1
 monitor 127.0.0.1
 ACCESSEOF
-    bashio::log.info "Created access.txt for local connections"
+    bashio::log.info "Restored access.txt with required permissions"
 fi
 
 # Build config ensuring required settings are present
