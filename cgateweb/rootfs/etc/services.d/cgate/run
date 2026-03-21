@@ -33,17 +33,6 @@ bashio::log.info "  Project: ${CGATE_PROJECT}"
 CGATE_CONFIG="${CGATE_DIR}/config/C-GateConfig.txt"
 mkdir -p "${CGATE_DIR}/config"
 
-# Ensure access.txt has required permissions (fix if damaged by v1.5.3)
-ACCESS_FILE="${CGATE_DIR}/config/access.txt"
-if [[ ! -f "${ACCESS_FILE}" ]] || ! grep -q "^program " "${ACCESS_FILE}"; then
-    cat > "${ACCESS_FILE}" << 'ACCESSEOF'
-interface 127.0.0.1
-program 127.0.0.1
-monitor 127.0.0.1
-ACCESSEOF
-    bashio::log.info "Restored access.txt with required permissions"
-fi
-
 # Build config ensuring required settings are present
 declare -A SETTINGS=(
     ["cgate.port"]="${CGATE_PORT}"
@@ -71,10 +60,13 @@ else
 fi
 
 bashio::log.debug "access.txt contents:"
+ACCESS_FILE="${CGATE_DIR}/config/access.txt"
 if [[ -f "${ACCESS_FILE}" ]]; then
     while IFS= read -r line; do
         bashio::log.debug "  ${line}"
     done < "${ACCESS_FILE}"
+else
+    bashio::log.debug "  (not found — C-Gate will use defaults)"
 fi
 
 bashio::log.debug "Existing project tag files:"
